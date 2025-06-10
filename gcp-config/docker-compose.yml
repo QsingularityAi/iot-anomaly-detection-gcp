@@ -5,7 +5,7 @@ services:
   iot-simulator:
     build:
       context: ..
-      dockerfile: docker/Dockerfile
+      dockerfile: gcp-config/Dockerfile
       target: development
     container_name: iot-anomaly-simulator
     environment:
@@ -15,7 +15,7 @@ services:
     volumes:
       - ../:/app
       - ${GOOGLE_APPLICATION_CREDENTIALS}:/app/credentials.json:ro
-    command: python iot_device_simulator.py --project-id ${PROJECT_ID} --topic-name ${TOPIC_NAME:-iot-sensor-data} --device-count 5 --interval 10
+    command: python src/iot_device_simulator_temp_vibration.py --project-id ${PROJECT_ID} --topic-name ${TOPIC_NAME:-iot-sensor-data} --device-count 5 --interval 10
     depends_on:
       - pubsub-emulator
     networks:
@@ -25,7 +25,7 @@ services:
   data-consumer:
     build:
       context: ..
-      dockerfile: docker/Dockerfile
+      dockerfile: gcp-config/Dockerfile
       target: development
     container_name: iot-anomaly-consumer
     environment:
@@ -36,7 +36,7 @@ services:
     volumes:
       - ../:/app
       - ${GOOGLE_APPLICATION_CREDENTIALS}:/app/credentials.json:ro
-    command: python data_consumer.py --project-id ${PROJECT_ID} --subscription-name ${SUBSCRIPTION_NAME:-dataflow-subscription}
+    command: python src/data_consumer.py --project-id ${PROJECT_ID} --subscription-name ${SUBSCRIPTION_NAME:-dataflow-subscription}
     depends_on:
       - pubsub-emulator
       - bigquery-emulator
@@ -47,7 +47,7 @@ services:
   ml-trainer:
     build:
       context: ..
-      dockerfile: docker/Dockerfile
+      dockerfile: gcp-config/Dockerfile
       target: development
     container_name: iot-anomaly-trainer
     environment:
@@ -57,7 +57,7 @@ services:
       - ../:/app
       - ${GOOGLE_APPLICATION_CREDENTIALS}:/app/credentials.json:ro
       - ml-models:/app/models
-    command: python custom_ml_models.py
+    command: python src/custom_ml_models_temp_vibration.py
     networks:
       - iot-network
 
@@ -65,7 +65,7 @@ services:
   ml-server:
     build:
       context: ..
-      dockerfile: docker/Dockerfile
+      dockerfile: gcp-config/Dockerfile
       target: ml-serving
     container_name: iot-anomaly-server
     ports:
@@ -158,7 +158,7 @@ services:
   jupyter:
     build:
       context: ..
-      dockerfile: docker/Dockerfile
+      dockerfile: gcp-config/Dockerfile
       target: development
     container_name: iot-anomaly-jupyter
     ports:
@@ -175,6 +175,32 @@ services:
         pip install jupyterlab &&
         jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''
       "
+    networks:
+      - iot-network
+
+  # Streamlit Dashboard
+  streamlit-dashboard:
+    build:
+      context: ..
+      dockerfile: gcp-config/Dockerfile
+      target: development
+    container_name: iot-anomaly-streamlit
+    ports:
+      - "8501:8501"
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+      - PROJECT_ID=${PROJECT_ID}
+    volumes:
+      - ../:/app
+      - ${GOOGLE_APPLICATION_CREDENTIALS}:/app/credentials.json:ro
+    working_dir: /app/streamlit-app
+    command: >
+      sh -c "
+        pip install -r requirements.txt &&
+        streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.allowRunOnSave=true
+      "
+    depends_on:
+      - bigquery-emulator
     networks:
       - iot-network
 

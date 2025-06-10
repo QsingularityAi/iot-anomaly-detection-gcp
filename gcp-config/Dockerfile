@@ -42,17 +42,18 @@ ENV ENVIRONMENT=development
 EXPOSE 8080
 
 # Default command for development
-CMD ["python", "iot_device_simulator.py", "--help"]
+CMD ["python", "src/iot_device_simulator_temp_vibration.py", "--help"]
 
 # Production stage
 FROM base as production
 
 # Copy only necessary files
-COPY iot_device_simulator.py .
-COPY data_consumer.py .
-COPY custom_ml_models.py .
-COPY model_evaluation.py .
-COPY config/ ./config/
+COPY src/iot_device_simulator_temp_vibration.py ./src/
+COPY src/data_consumer.py ./src/
+COPY src/custom_ml_models_temp_vibration.py ./src/
+COPY src/model_evaluation.py ./src/
+COPY src/dataflow_pipeline_temp_vibration.py ./src/
+COPY gcp-config/config/ ./config/
 
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash app
@@ -66,19 +67,19 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import sys; sys.exit(0)"
 
 # Default command
-CMD ["python", "data_consumer.py"]
+CMD ["python", "src/data_consumer.py"]
 
 # Dataflow stage (for Dataflow pipeline)
 FROM apache/beam_python3.9_sdk:latest as dataflow
 
 # Copy pipeline code
-COPY dataflow_pipeline.py /opt/apache/beam/
+COPY src/dataflow_pipeline_temp_vibration.py /opt/apache/beam/
 
 # Set working directory
 WORKDIR /opt/apache/beam
 
 # Default command for Dataflow
-CMD ["python", "dataflow_pipeline.py"]
+CMD ["python", "dataflow_pipeline_temp_vibration.py"]
 
 # ML Model Serving stage
 FROM python:3.9-slim as ml-serving
@@ -97,8 +98,8 @@ RUN pip install --no-cache-dir \
 WORKDIR /app
 
 # Copy model serving code
-COPY deploy_vertex_ai.py .
-COPY custom_ml_models.py .
+COPY gcp-config/deploy_vertex_ai.py .
+COPY src/custom_ml_models_temp_vibration.py .
 
 # Create serving script
 RUN echo '#!/usr/bin/env python3\n\
