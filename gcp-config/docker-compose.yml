@@ -1,0 +1,196 @@
+version: '3.8'
+
+services:
+  # IoT Device Simulator
+  iot-simulator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: development
+    container_name: iot-anomaly-simulator
+    environment:
+      - PROJECT_ID=${PROJECT_ID}
+      - TOPIC_NAME=${TOPIC_NAME:-iot-sensor-data}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+    volumes:
+      - ../:/app
+      - ${GOOGLE_APPLICATION_CREDENTIALS}:/app/credentials.json:ro
+    command: python iot_device_simulator.py --project-id ${PROJECT_ID} --topic-name ${TOPIC_NAME:-iot-sensor-data} --device-count 5 --interval 10
+    depends_on:
+      - pubsub-emulator
+    networks:
+      - iot-network
+
+  # Data Consumer
+  data-consumer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: development
+    container_name: iot-anomaly-consumer
+    environment:
+      - PROJECT_ID=${PROJECT_ID}
+      - SUBSCRIPTION_NAME=${SUBSCRIPTION_NAME:-dataflow-subscription}
+      - BIGQUERY_DATASET=${BIGQUERY_DATASET:-iot_anomaly_detection}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+    volumes:
+      - ../:/app
+      - ${GOOGLE_APPLICATION_CREDENTIALS}:/app/credentials.json:ro
+    command: python data_consumer.py --project-id ${PROJECT_ID} --subscription-name ${SUBSCRIPTION_NAME:-dataflow-subscription}
+    depends_on:
+      - pubsub-emulator
+      - bigquery-emulator
+    networks:
+      - iot-network
+
+  # ML Model Training
+  ml-trainer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: development
+    container_name: iot-anomaly-trainer
+    environment:
+      - PROJECT_ID=${PROJECT_ID}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+    volumes:
+      - ../:/app
+      - ${GOOGLE_APPLICATION_CREDENTIALS}:/app/credentials.json:ro
+      - ml-models:/app/models
+    command: python custom_ml_models.py
+    networks:
+      - iot-network
+
+  # ML Model Serving
+  ml-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: ml-serving
+    container_name: iot-anomaly-server
+    ports:
+      - "8080:8080"
+    environment:
+      - MODEL_PATH=/app/models
+      - PORT=8080
+    volumes:
+      - ml-models:/app/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - iot-network
+
+  # Pub/Sub Emulator (for local development)
+  pubsub-emulator:
+    image: google/cloud-sdk:latest
+    container_name: pubsub-emulator
+    ports:
+      - "8085:8085"
+    command: >
+      sh -c "
+        gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 --project=${PROJECT_ID}
+      "
+    environment:
+      - PUBSUB_EMULATOR_HOST=0.0.0.0:8085
+    networks:
+      - iot-network
+
+  # BigQuery Emulator (for local development)
+  bigquery-emulator:
+    image: ghcr.io/goccy/bigquery-emulator:latest
+    container_name: bigquery-emulator
+    ports:
+      - "9050:9050"
+    command: >
+      bigquery-emulator --project=${PROJECT_ID} --port=9050
+    environment:
+      - BIGQUERY_EMULATOR_HOST=0.0.0.0:9050
+    networks:
+      - iot-network
+
+  # Monitoring Dashboard (Grafana)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: iot-anomaly-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../monitoring/grafana:/etc/grafana/provisioning
+    networks:
+      - iot-network
+
+  # Prometheus (for metrics collection)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: iot-anomaly-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    networks:
+      - iot-network
+
+  # Redis (for caching and session storage)
+  redis:
+    image: redis:7-alpine
+    container_name: iot-anomaly-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - iot-network
+
+  # Jupyter Notebook (for data analysis and model development)
+  jupyter:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: development
+    container_name: iot-anomaly-jupyter
+    ports:
+      - "8888:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+    volumes:
+      - ../:/app
+      - ${GOOGLE_APPLICATION_CREDENTIALS}:/app/credentials.json:ro
+      - jupyter-data:/home/jovyan/work
+    command: >
+      sh -c "
+        pip install jupyterlab &&
+        jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''
+      "
+    networks:
+      - iot-network
+
+volumes:
+  ml-models:
+    driver: local
+  grafana-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  redis-data:
+    driver: local
+  jupyter-data:
+    driver: local
+
+networks:
+  iot-network:
+    driver: bridge
+
