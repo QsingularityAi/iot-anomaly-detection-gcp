@@ -156,7 +156,7 @@ WHERE
   timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)
   AND device_id IN (
     SELECT device_id 
-    FROM `iot_anomaly_detection.sensor_data_temp_vibration` 
+    FROM `iot_anomaly_detection.sensor_data` 
     GROUP BY device_id 
     HAVING COUNT(*) > 100
   );

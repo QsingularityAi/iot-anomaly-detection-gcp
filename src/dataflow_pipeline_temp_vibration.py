@@ -158,28 +158,32 @@ class FormatForBigQuery(beam.DoFn):
 
     def process(self, element):
         try:
-            # Format for BigQuery schema
+            # Calculate z-scores for temperature and vibration
+            temp_z_score = self._calculate_z_score(element.get('temperature'), 'temperature')
+            vibration_z_score = self._calculate_z_score(element.get('vibration'), 'vibration')
+            
+            # Format for BigQuery schema (temperature and vibration only)
             bq_row = {
                 'device_id': element.get('device_id'),
                 'device_type': element.get('device_type'),
                 'location': json.dumps(element.get('location', {})),  # Store location as JSON string
                 'timestamp': element.get('timestamp'),
-                'processed_at': element.get('processed_timestamp'),  # Map processed_timestamp to processed_at
+                'processed_at': element.get('processed_timestamp'),
                 'temperature': element.get('temperature'),
-                'humidity': element.get('sensor_data', {}).get('humidity', 50.0),  # Default humidity if not present
-                'pressure': element.get('sensor_data', {}).get('pressure', 1013.25),  # Default pressure if not present
-                'vibration_level': element.get('vibration'),  # Map vibration to vibration_level
-                'power_consumption': element.get('sensor_data', {}).get('power_consumption'),  # Include power_consumption
-                'is_anomaly': element.get('anomaly_detected', False),  # Map anomaly_detected to is_anomaly
-                'anomaly_type': element.get('anomaly_severity', 'normal'),  # Map anomaly_severity to anomaly_type
-                'anomaly_score': self._calculate_anomaly_score(element),  # Calculate anomaly score
-                'rule_based_anomaly': element.get('anomaly_detected', False),  # Use rule-based detection
-                'ml_anomaly_score': element.get('ml_anomaly_score'),  # Include ml_anomaly_score if available
-                'ml_anomaly_prediction': element.get('ml_anomaly_prediction'),  # Include ml_anomaly_prediction if available
+                'vibration_level': element.get('vibration'),
+                'is_anomaly': element.get('anomaly_detected', False),
+                'anomaly_type': element.get('anomaly_severity', 'normal'),
+                'anomaly_score': self._calculate_anomaly_score(element),
+                'anomaly_reasons': json.dumps(element.get('anomaly_reasons', [])),
+                'anomaly_severity': element.get('anomaly_severity', 'normal'),
+                'temp_anomaly': element.get('temperature_anomaly', False),
+                'vibration_anomaly': element.get('vibration_anomaly', False),
+                'temp_z_score': temp_z_score,
+                'vibration_z_score': vibration_z_score
             }
 
             # Ensure required fields are not None
-            if bq_row['device_id'] is None or bq_row['timestamp'] is None:
+            if bq_row['device_id'] is None or bq_row['timestamp'] is None or bq_row['temperature'] is None or bq_row['vibration_level'] is None:
                 logging.warning(f"Skipping row with missing required fields: {element}")
                 return
 
@@ -187,6 +191,24 @@ class FormatForBigQuery(beam.DoFn):
 
         except Exception as e:
             logging.error(f"Error formatting for BigQuery: {e}")
+    
+    def _calculate_z_score(self, value, sensor_type):
+        """Calculate simple z-score (placeholder - in production, use historical data)"""
+        if value is None:
+            return None
+        
+        # Simple z-score calculation with default means and stds
+        defaults = {
+            'temperature': {'mean': 22.0, 'std': 5.0},
+            'vibration': {'mean': 2.0, 'std': 1.0}
+        }
+        
+        if sensor_type in defaults:
+            mean = defaults[sensor_type]['mean']
+            std = defaults[sensor_type]['std']
+            return (value - mean) / std if std > 0 else 0.0
+        
+        return 0.0
     
     def _calculate_anomaly_score(self, element):
         """Calculate a simple anomaly score based on detected anomalies"""
@@ -265,20 +287,20 @@ def run_pipeline(pipeline_options):
                     'fields': [
                         {'name': 'device_id', 'type': 'STRING', 'mode': 'REQUIRED'},
                         {'name': 'device_type', 'type': 'STRING', 'mode': 'REQUIRED'},
-                        {'name': 'location', 'type': 'STRING', 'mode': 'REQUIRED'},
+                        {'name': 'location', 'type': 'STRING', 'mode': 'NULLABLE'},
                         {'name': 'timestamp', 'type': 'TIMESTAMP', 'mode': 'REQUIRED'},
                         {'name': 'processed_at', 'type': 'TIMESTAMP', 'mode': 'NULLABLE'},
                         {'name': 'temperature', 'type': 'FLOAT', 'mode': 'REQUIRED'},
-                        {'name': 'humidity', 'type': 'FLOAT', 'mode': 'REQUIRED'},
-                        {'name': 'pressure', 'type': 'FLOAT', 'mode': 'REQUIRED'},
-                        {'name': 'vibration_level', 'type': 'FLOAT', 'mode': 'NULLABLE'},
-                        {'name': 'power_consumption', 'type': 'FLOAT', 'mode': 'NULLABLE'},
+                        {'name': 'vibration_level', 'type': 'FLOAT', 'mode': 'REQUIRED'},
                         {'name': 'is_anomaly', 'type': 'BOOLEAN', 'mode': 'REQUIRED'},
                         {'name': 'anomaly_type', 'type': 'STRING', 'mode': 'NULLABLE'},
                         {'name': 'anomaly_score', 'type': 'FLOAT', 'mode': 'NULLABLE'},
-                        {'name': 'rule_based_anomaly', 'type': 'BOOLEAN', 'mode': 'NULLABLE'},
-                        {'name': 'ml_anomaly_score', 'type': 'FLOAT', 'mode': 'NULLABLE'},
-                        {'name': 'ml_anomaly_prediction', 'type': 'BOOLEAN', 'mode': 'NULLABLE'}
+                        {'name': 'anomaly_reasons', 'type': 'STRING', 'mode': 'NULLABLE'},
+                        {'name': 'anomaly_severity', 'type': 'STRING', 'mode': 'NULLABLE'},
+                        {'name': 'temp_anomaly', 'type': 'BOOLEAN', 'mode': 'NULLABLE'},
+                        {'name': 'vibration_anomaly', 'type': 'BOOLEAN', 'mode': 'NULLABLE'},
+                        {'name': 'temp_z_score', 'type': 'FLOAT', 'mode': 'NULLABLE'},
+                        {'name': 'vibration_z_score', 'type': 'FLOAT', 'mode': 'NULLABLE'}
                     ]
                 },
                 write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
